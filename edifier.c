@@ -2,6 +2,10 @@
 #include <avr/io.h>
 #include "edifier.h"
 
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+#define CLAMP(x, min, max) (MIN(MAX(x, min), max))
+
 uint8_t valueToVolume(uint8_t value) {
     value = 63 - value;
     if (value <= 26) {
@@ -50,6 +54,15 @@ void edi_decode_package(uint8_t* package, Edifier* edifier) {
         edifier->volume = valueToVolume(package[0]);
         edifier->input = valueToInput(package[5]);
         edifier->treb = valueToTreb(package[4]);
-        edifier->bass = valueToBass(package[1]);        
+        edifier->bass = valueToBass(package[1]);
+        edifier->mute = edifier->volume == 0 ? SYSTEM_MUTE : SYSTEM_ON;
     }
+}
+
+void edi_clamp_settings(Edifier* settings) {
+    settings->volume = CLAMP(settings->volume, 0, 60);
+    settings->input = CLAMP(settings->input, 0, 1);
+    settings->treb = CLAMP(settings->treb, -7, 7);
+    settings->bass = CLAMP(settings->bass, -10, 10);
+    settings->mute = CLAMP(settings->mute, 0, 1);
 }

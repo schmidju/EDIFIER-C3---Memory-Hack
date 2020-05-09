@@ -34,8 +34,14 @@
 #define EEPROM_INPUT_ADDR   (uint8_t*) 1
 #define EEPROM_TREB_ADDR    (uint8_t*) 2
 #define EEPROM_BASS_ADDR    (uint8_t*) 3
+#define EEPROM_MUTE_ADDR    (uint8_t*) 4
 
-volatile uint8_t newPackage = 0;
+#define RESTORE_STATE_FINISHED      0
+#define RESTORE_STATE_INPUT         1
+#define RESTORE_STATE_TREB          2
+#define RESTORE_STATE_BASS          3
+#define RESTORE_STATE_VOLUME        4
+#define RESTORE_STATE_MUTE          5
 
 const Edifier Edifier_default = {30, INPUT_PC, 0, 0, SYSTEM_ON} ;
 
@@ -99,7 +105,6 @@ ISR (TWI_vect)
     // recv finished for one package
     if (twislave_ISR() == TW_SR_STOP) {
         edi_decode_package((uint8_t*)i2cpackage, &currentState);
-        newPackage = 1;
    } 
 }
 
@@ -109,15 +114,19 @@ void read_eeprom() {
     desiredState.input = eeprom_read_byte(EEPROM_INPUT_ADDR);
     desiredState.treb = (int8_t)eeprom_read_byte(EEPROM_TREB_ADDR);
     desiredState.bass = (int8_t)eeprom_read_byte(EEPROM_BASS_ADDR);
+    desiredState.mute = (int8_t)eeprom_read_byte(EEPROM_MUTE_ADDR);
     sei();
 }
 
 void write_eeprom() {
     cli();
-    eeprom_write_byte(EEPROM_VOLUME_ADDR, currentState.volume);
+    if (currentState.mute == SYSTEM_ON) {
+        eeprom_write_byte(EEPROM_VOLUME_ADDR, currentState.volume);
+    }
     eeprom_write_byte(EEPROM_INPUT_ADDR, currentState.input);
     eeprom_write_byte(EEPROM_TREB_ADDR, (uint8_t)currentState.treb);
     eeprom_write_byte(EEPROM_BASS_ADDR, (uint8_t)currentState.bass);
+    eeprom_write_byte(EEPROM_MUTE_ADDR, (uint8_t)currentState.mute);
     sei();
 }
 
@@ -133,7 +142,7 @@ void init_eeprom() {
     //init eeprom and do sanity check
     read_eeprom();
     printEdifier(&desiredState, "Init Desired");
-    if (desiredState.volume > 60 | desiredState.input > 1 | desiredState.treb > 7
+    if (desiredState.volume > 60 | desiredState.treb > 7
         | desiredState.treb < -7 | desiredState.bass > 10 | desiredState.bass < -10) {
         printEdifier(&currentState, "Error");
         write_eeprom();
@@ -142,10 +151,82 @@ void init_eeprom() {
     }
 }
 
+uint8_t restore_stored_input() {
+    if (currentState.input != desiredState.input) {
+        if (desiredState.input == INPUT_PC) {
+            sendCommand(NEC_IN_PC);
+        }
+        else {
+            sendCommand(NEC_IN_AUX);
+        }
+        return FALSE;
+    } else {
+        return TRUE;
+    }
+}
+
+uint8_t restore_stored_treb() {
+    if (currentState.treb != desiredState.treb) {
+        if (currentState.treb > desiredState.treb) {
+            sendCommand(NEC_TREB_DOWN);
+        }
+        else {
+            sendCommand(NEC_TREB_UP);
+        }
+        return FALSE;
+    } else {
+        return TRUE;
+    }
+}
+
+uint8_t restore_stored_bass() {
+    if (currentState.bass != desiredState.bass) {
+        if (currentState.bass > desiredState.bass) {
+            sendCommand(NEC_BASS_DOWN);
+        }
+        else {
+            sendCommand(NEC_BASS_UP);
+        }
+        return FALSE;
+    } else {
+        return TRUE;
+    }
+}
+
+uint8_t restore_stored_volume() {
+    // do not restore volume if target is 0, better use mute
+    if (currentState.volume != desiredState.volume && desiredState.volume != 0) {
+        if (currentState.volume > desiredState.volume) {
+            sendCommand(NEC_VOL_DOWN);
+        }
+        else {
+            sendCommand(NEC_VOL_UP);
+        }
+        return FALSE;
+    } else {
+        return TRUE;
+    }
+}
+
+uint8_t restore_stored_mute_state() {
+    if (currentState.mute != desiredState.mute) {
+        sendCommand(NEC_MUTE);
+        // add aditional delay
+        // mutting takes about 25ms per volume level.
+        uint8_t currentVolume = currentState.volume;
+        for (uint8_t i = 0; i < currentVolume; i++) {
+            _delay_ms(25);
+        }
+        return FALSE;
+    } else {
+        return TRUE;
+    }
+}
+
 int main (void) 
 {    
 	IRMP_DATA irmp_data;
-    uint8_t load = 1;
+    uint8_t load = RESTORE_STATE_INPUT;
     uint8_t save = 1;
 	uart_init((UART_BAUD_SELECT((UART_BAUD_RATE),F_CPU)));
     uart_puts("Startup!\r\n");
@@ -163,40 +244,24 @@ int main (void)
     _delay_ms(1000);
 
     while (load) {
-        if (currentState.input != desiredState.input) {
-            if (desiredState.input == INPUT_PC) {
-                sendCommand(NEC_IN_PC);
-            }
-            else {
-                sendCommand(NEC_IN_AUX);                
-            }
-        }
-        else if (currentState.treb != desiredState.treb) {
-            if (currentState.treb > desiredState.treb) {
-                sendCommand(NEC_TREB_DOWN);
-            }
-            else {
-                sendCommand(NEC_TREB_UP);
-            }
-        }
-        else if (currentState.bass != desiredState.bass) {
-            if (currentState.bass > desiredState.bass) {
-                sendCommand(NEC_BASS_DOWN);
-            }
-            else {
-                sendCommand(NEC_BASS_UP);
-            }
-        }
-        else if (currentState.volume != desiredState.volume && desiredState.volume != 0) {
-            if (currentState.volume > desiredState.volume) {
-                sendCommand(NEC_VOL_DOWN);
-            }
-            else {
-                sendCommand(NEC_VOL_UP);
-            }
-        }
-        else {
-            load = 0;
+        switch(load) {
+            case RESTORE_STATE_INPUT:
+                if (restore_stored_input()) load = RESTORE_STATE_TREB;
+                break;
+            case RESTORE_STATE_TREB:
+                if (restore_stored_treb()) load = RESTORE_STATE_BASS;
+                break;
+            case RESTORE_STATE_BASS:
+                if (restore_stored_bass()) load = RESTORE_STATE_VOLUME;
+                break;
+            case RESTORE_STATE_VOLUME:
+                if (restore_stored_volume()) load = RESTORE_STATE_MUTE;
+                break;
+            case RESTORE_STATE_MUTE:
+                if (restore_stored_mute_state()) load = RESTORE_STATE_FINISHED;
+                break;
+            default:
+                load = RESTORE_STATE_FINISHED;
         }
         _delay_ms(100);
     }
@@ -208,19 +273,22 @@ int main (void)
     adc_init();
     _delay_ms(100);
 
-    while(save)                          // Endless loop
-    {                                 // main() will never be left
+    // loop until powerloss gets detected and settings has been stored
+    while(save)
+    {
         if(ADC == 1023){
+            // power loss detected. disable everything to save energy
             adc_deinit();
             twi_slave_deinit();
 
+            // store settings now
             write_eeprom();
             uart_puts("PowerLos!\r\n");
             printEdifier(&currentState, "Saved");
             save = 0;
-            // power loss detected. store settings now
         }
     }
 
+    // main() will never be left
     for(;;);
 }

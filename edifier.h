@@ -13,3 +13,4 @@ typedef struct {
 } Edifier;
 
 void edi_decode_package(uint8_t* package, Edifier* edifier);
+void edi_clamp_settings(Edifier* settings);
